@@ -1,0 +1,68 @@
+// Service File
+
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.util.List;
+
+@Service
+public class ExcelReportService {
+
+    @Autowired
+    private VEsopIwiReconReportRepository iwiReconRepo;
+
+    @Autowired
+    private VEsopRjctdRfrlReconReportRepository rjctdReconRepo;
+
+    private static final String FILE_PATH = "C:\\Users\\harsh\\Downloads\\excel_report\\Recon_Report.xlsx";
+
+    public String generateExcelReport() {
+        try (Workbook workbook = new XSSFWorkbook()) {
+            Sheet sheet1 = workbook.createSheet("IWI Recon Report");
+            Sheet sheet2 = workbook.createSheet("Rejected Referral Recon Report");
+
+            List<VEsopIwiReconReport> iwiList = iwiReconRepo.findAll();
+            List<VEsopRjctdRfrlReconReport> rejectedList = rjctdReconRepo.findAll();
+
+            writeSheet(sheet1, iwiList);
+            writeSheet(sheet2, rejectedList);
+
+            try (FileOutputStream fileOut = new FileOutputStream(FILE_PATH)) {
+                workbook.write(fileOut);
+            }
+
+            return FILE_PATH;
+        } catch (IOException e) {
+            throw new RuntimeException("Error generating Excel report", e);
+        }
+    }
+
+    private void writeSheet(Sheet sheet, List<?> data) {
+        Row headerRow = sheet.createRow(0);
+        if (data.isEmpty()) return;
+
+        var firstObj = data.get(0);
+        var fields = firstObj.getClass().getDeclaredFields();
+
+        for (int i = 0; i < fields.length; i++) {
+            fields[i].setAccessible(true);
+            headerRow.createCell(i).setCellValue(fields[i].getName());
+        }
+
+        int rowNum = 1;
+        for (Object obj : data) {
+            Row row = sheet.createRow(rowNum++);
+            for (int i = 0; i < fields.length; i++) {
+                fields[i].setAccessible(true);
+                try {
+                    row.createCell(i).setCellValue(String.valueOf(fields[i].get(obj)));
+                } catch (IllegalAccessException e) {
+                    row.createCell(i).setCellValue("Error");
+                }
+            }
+        }
+    }
+}
