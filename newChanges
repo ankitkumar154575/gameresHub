@@ -1,0 +1,181 @@
+application.properties :
+
+# ================================
+# Server Configuration
+# ================================
+server.port=8080
+
+# ================================
+# Oracle Database Configuration
+# ================================
+spring.datasource.driver-class-name=oracle.jdbc.OracleDriver
+spring.datasource.url=jdbc:oracle:thin:@NASAIPD.oreas.dyn.nsroot.net:8889/HANA5AIPD
+spring.datasource.username=NASAIPD_SDM
+spring.datasource.password=Welcome123
+spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.OracleDialect
+
+# ================================
+# Excel File Path
+# ================================
+excel.file.path=C:/Users/harsh/Downloads/excel_report/Recon_Report.xlsx
+
+# ================================
+# Email Configuration
+# ================================
+spring.mail.host=smtp.gmail.com
+spring.mail.port=587
+spring.mail.username=adityaprakash0936@gmail.com
+spring.mail.password=Password@123
+spring.mail.properties.mail.smtp.auth=true
+spring.mail.properties.mail.smtp.starttls.enable=true
+
+# ================================
+# Logging Configuration (Replaces logback-spring.xml)
+# ================================
+# Console log level
+logging.level.org.springframework=INFO
+logging.level.com.example=DEBUG
+
+# Log file configuration
+logging.file.name=C:/Users/harsh/Downloads/excel_report/app.log
+logging.file.max-size=10MB
+logging.file.total-size-cap=100MB
+
+# Log patterns
+logging.pattern.console=%d{yyyy-MM-dd HH:mm:ss} - %msg%n
+logging.pattern.file=%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n
+
+
+ExcelExportService.java : 
+
+@Service
+public class ExcelService {
+
+    @Value("${excel.file.path}")  // Injected from application.properties
+    private String filePath;
+
+    public String generateExcelFile(List<EsopRejectedReferral> rejectedReferrals,
+                                    List<EsopIgnoredRecon> ignoredRecons,
+                                    List<EsopIwiRecon> iwiRecons) throws IOException {
+
+        Workbook workbook = new XSSFWorkbook();
+        Sheet sheet = workbook.createSheet("Recon_Report");
+
+        int rowNum = 0;
+
+        rowNum = writeTableData(sheet, "Rejected Referrals", rejectedReferrals, rowNum);
+        rowNum += 2;
+
+        rowNum = writeTableData(sheet, "Ignored Recon", ignoredRecons, rowNum);
+        rowNum += 2;
+
+        writeTableData(sheet, "IWI Recon", iwiRecons, rowNum);
+
+        try (FileOutputStream fileOut = new FileOutputStream(filePath)) {
+            workbook.write(fileOut);
+        }
+        workbook.close();
+
+        return filePath;
+    }
+
+    private <T> int writeTableData(Sheet sheet, String title, List<T> data, int rowNum) {
+        Row headerRow = sheet.createRow(rowNum++);
+        Cell headerCell = headerRow.createCell(0);
+        headerCell.setCellValue(title);
+        CellStyle style = sheet.getWorkbook().createCellStyle();
+        Font font = sheet.getWorkbook().createFont();
+        font.setBold(true);
+        style.setFont(font);
+        headerCell.setCellStyle(style);
+
+        if (!data.isEmpty()) {
+            Row columnRow = sheet.createRow(rowNum++);
+            Field[] fields = data.get(0).getClass().getDeclaredFields();
+            for (int i = 0; i < fields.length; i++) {
+                Cell cell = columnRow.createCell(i);
+                cell.setCellValue(fields[i].getName());
+                cell.setCellStyle(style);
+            }
+
+            for (T record : data) {
+                Row dataRow = sheet.createRow(rowNum++);
+                for (int i = 0; i < fields.length; i++) {
+                    fields[i].setAccessible(true);
+                    try {
+                        dataRow.createCell(i).setCellValue(String.valueOf(fields[i].get(record)));
+                    } catch (IllegalAccessException e) {
+                        e.printStackTrace();
+                    }
+                }
+            }
+        }
+        return rowNum;
+    }
+}
+EmailService.java :
+
+@Service
+public class EmailService {
+
+    @Autowired
+    private JavaMailSender mailSender;
+
+    @Value("${spring.mail.username}")
+    private String senderEmail;
+
+    public void sendEmailWithAttachment(String to, String subject, String body, String filePath) throws MessagingException {
+
+        MimeMessage message = mailSender.createMimeMessage();
+        MimeMessageHelper helper = new MimeMessageHelper(message, true);
+
+        helper.setFrom(senderEmail);
+        helper.setTo(to);
+        helper.setSubject(subject);
+        helper.setText(body);
+
+        FileSystemResource file = new FileSystemResource(new File(filePath));
+        helper.addAttachment(file.getFilename(), file);
+
+        mailSender.send(message);
+    }
+}
+
+ScheduledReport.java :
+
+@Component
+public class ReportScheduler {
+
+    @Autowired
+    private ExcelService excelService;
+
+    @Autowired
+    private EmailService emailService;
+
+    @Autowired
+    private EsopRejectedReferralRepository rejectedReferralRepo;
+
+    @Autowired
+    private EsopIgnoredReconRepository ignoredReconRepo;
+
+    @Autowired
+    private EsopIwiReconRepository iwiReconRepo;
+
+    @Scheduled(cron = "0 0 22 * * ?")  // Runs daily at 10 PM
+    public void scheduledReportGeneration() {
+        try {
+            List<EsopRejectedReferral> rejectedReferrals = rejectedReferralRepo.findAll();
+            List<EsopIgnoredRecon> ignoredRecons = ignoredReconRepo.findAll();
+            List<EsopIwiRecon> iwiRecons = iwiReconRepo.findAll();
+
+            String filePath = excelService.generateExcelFile(rejectedReferrals, ignoredRecons, iwiRecons);
+
+            String subject = "eSOP to CMT Reconciliation Report";
+            String body = "Please see the attached Reconciliation Report that was processed on " + LocalDate.now() + ".";
+            emailService.sendEmailWithAttachment("ankitkumar154575@gmail.com", subject, body, filePath);
+
+        } catch (Exception e) {
+            System.err.println("Error in scheduled task: " + e.getMessage());
+        }
+    }
+}
