@@ -1,0 +1,224 @@
+// ExcelService.java
+
+package com.example.esopreconreport.service;
+
+import com.example.esopreconreport.entity.*;
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.util.List;
+
+@Service
+public class ExcelService {
+
+    @Value("${report.file.path}")
+    private String filePath;
+
+    public String generateExcelFile(List<EsopRejectedReferral> rejectedReferrals,
+                                    List<EsopIgnoredRecon> ignoredRecons,
+                                    List<EsopIwiRecon> iwiRecons) throws IOException {
+
+        Workbook workbook = new XSSFWorkbook();
+        Sheet sheet = workbook.createSheet("Recon_Report");
+        int rowNum = 0;
+
+        rowNum = writeTableData(sheet, "Rejected Referrals", rejectedReferrals, rowNum);
+        rowNum += 2;
+
+        rowNum = writeTableData(sheet, "Ignored Recons", ignoredRecons, rowNum);
+        rowNum += 2;
+
+        writeTableData(sheet, "IWI Recons", iwiRecons, rowNum);
+
+        FileOutputStream fileOut = new FileOutputStream(filePath);
+        workbook.write(fileOut);
+        fileOut.close();
+        workbook.close();
+
+        return filePath;
+    }
+
+    private int writeTableData(Sheet sheet, String title, List<?> data, int startRow) {
+        Row headerRow = sheet.createRow(startRow++);
+        CellStyle headerStyle = sheet.getWorkbook().createCellStyle();
+        Font font = sheet.getWorkbook().createFont();
+        font.setBold(true);
+        headerStyle.setFont(font);
+
+        headerRow.createCell(0).setCellValue(title);
+        headerRow.getCell(0).setCellStyle(headerStyle);
+
+        if (!data.isEmpty()) {
+            Object firstRecord = data.get(0);
+            Row columnHeaderRow = sheet.createRow(startRow++);
+            int cellIndex = 0;
+            for (var field : firstRecord.getClass().getDeclaredFields()) {
+                field.setAccessible(true);
+                Cell cell = columnHeaderRow.createCell(cellIndex++);
+                cell.setCellValue(field.getName());
+                cell.setCellStyle(headerStyle);
+            }
+
+            for (Object record : data) {
+                Row dataRow = sheet.createRow(startRow++);
+                cellIndex = 0;
+                for (var field : record.getClass().getDeclaredFields()) {
+                    field.setAccessible(true);
+                    try {
+                        Object value = field.get(record);
+                        dataRow.createCell(cellIndex++).setCellValue(value != null ? value.toString() : "");
+                    } catch (IllegalAccessException e) {
+                        e.printStackTrace();
+                    }
+                }
+            }
+        }
+        return startRow;
+    }
+}
+
+EmailService.java
+
+package com.example.esopreconreport.service;
+
+import jakarta.mail.MessagingException;
+import jakarta.mail.internet.MimeMessage;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.javamail.MimeMessageHelper;
+import org.springframework.stereotype.Service;
+
+import java.io.File;
+
+@Service
+public class EmailService {
+
+    @Autowired
+    private JavaMailSender mailSender;
+
+    @Value("${spring.mail.username}")
+    private String sender;
+
+    public void sendEmailWithAttachment(String filePath) throws MessagingException {
+        MimeMessage message = mailSender.createMimeMessage();
+        MimeMessageHelper helper = new MimeMessageHelper(message, true);
+
+        helper.setTo("ankitkumar154575@gmail.com");
+        helper.setSubject("eSOP to CMT Reconciliation Report");
+        helper.setText("Please see the attached Reconciliation Report that was processed on " + java.time.LocalDate.now());
+
+        File file = new File(filePath);
+        helper.addAttachment(file.getName(), file);
+
+        mailSender.send(message);
+    }
+}
+
+ScheduledTaask.java
+
+package com.example.esopreconreport.service;
+
+import com.example.esopreconreport.entity.*;
+import com.example.esopreconreport.repository.*;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+
+@Component
+public class ScheduledTask {
+
+    @Autowired
+    private ExcelService excelService;
+
+    @Autowired
+    private EmailService emailService;
+
+    @Autowired
+    private EsopRejectedReferralRepository rejectedReferralRepository;
+
+    @Autowired
+    private EsopIgnoredReconRepository ignoredReconRepository;
+
+    @Autowired
+    private EsopIwiReconRepository iwiReconRepository;
+
+    @Scheduled(cron = "0 0 22 * * ?")  // Runs daily at 10 PM
+    public void executeJob() {
+        try {
+            List<EsopRejectedReferral> rejectedReferrals = rejectedReferralRepository.findAll();
+            List<EsopIgnoredRecon> ignoredRecons = ignoredReconRepository.findAll();
+            List<EsopIwiRecon> iwiRecons = iwiReconRepository.findAll();
+
+            String filePath = excelService.generateExcelFile(rejectedReferrals, ignoredRecons, iwiRecons);
+            emailService.sendEmailWithAttachment(filePath);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}
+
+CONTROLLER
+
+package com.example.esopreconreport.controller;
+
+import com.example.esopreconreport.service.ScheduledTask;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/report")
+public class ReportController {
+
+    @Autowired
+    private ScheduledTask scheduledTask;
+
+    @GetMapping("/generate")
+    public ResponseEntity<String> generateReport() {
+        scheduledTask.executeJob();
+        return ResponseEntity.ok("Excel file generated and email sent successfully.");
+    }
+}
+
+LOGBACK-SPRING.JAVA
+
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration scan="true" scanPeriod="30 seconds">
+
+    <!-- Console Appender -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- File Appender -->
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>C:/Users/harsh/Downloads/excel_report/app.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>C:/Users/harsh/Downloads/excel_report/app-%d{yyyy-MM-dd}.log</fileNamePattern>
+            <maxHistory>7</maxHistory>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Logging Levels -->
+    <logger name="org.springframework" level="INFO"/>
+    <logger name="com.example" level="DEBUG"/>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="FILE"/>
+    </root>
+
+</configuration>
