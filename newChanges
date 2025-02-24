@@ -1,25 +1,5 @@
-package com.example.reconreport.controller;
-
-import com.example.reconreport.model.EsopIgnoredRecon;
-import com.example.reconreport.model.EsopIwiRecon;
-import com.example.reconreport.model.EsopRejectedReferral;
-import com.example.reconreport.repository.EsopIgnoredReconRepository;
-import com.example.reconreport.repository.EsopIwiReconRepository;
-import com.example.reconreport.repository.EsopRejectedReferralRepository;
-import com.example.reconreport.service.EmailService;
-import com.example.reconreport.service.ExcelService;
-
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.web.bind.annotation.*;
-
-import javax.mail.MessagingException;
-import java.io.IOException;
-import java.time.LocalDate;
-import java.util.List;
-
 @RestController
-@RequestMapping("/api/report")
+@RequestMapping("/api/reports")
 public class ReportController {
 
     @Autowired
@@ -38,27 +18,39 @@ public class ReportController {
     private EsopIwiReconRepository iwiReconRepo;
 
     @Value("${excel.file.path}")
-    private String excelFilePath;
+    private String filePath;
 
-    @PostMapping("/generate-and-send")
-    public String generateAndSendReport() {
+    // ✅ 1️⃣ API to Generate Excel
+    @PostMapping("/generate-excel")
+    public ResponseEntity<String> generateExcel() {
         try {
-            // ✅ Fetch data from DB
             List<EsopRejectedReferral> rejectedReferrals = rejectedReferralRepo.findAll();
             List<EsopIgnoredRecon> ignoredRecons = ignoredReconRepo.findAll();
             List<EsopIwiRecon> iwiRecons = iwiReconRepo.findAll();
 
-            // ✅ Generate Excel file
-            String filePath = excelService.generateExcelFile(rejectedReferrals, ignoredRecons, iwiRecons);
+            // Generate Excel File
+            excelService.generateExcelFile(rejectedReferrals, ignoredRecons, iwiRecons);
 
-            // ✅ Send Email with Attachment
+            return ResponseEntity.ok("Excel file generated successfully at: " + filePath);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Error generating Excel: " + e.getMessage());
+        }
+    }
+
+    // ✅ 2️⃣ API to Send Email with Excel Attachment
+    @PostMapping("/send-email")
+    public ResponseEntity<String> sendEmail() {
+        try {
             String subject = "eSOP to CMT Reconciliation Report";
             String body = "Please see the attached Reconciliation Report that was processed on " + LocalDate.now() + ".";
+
             emailService.sendEmailWithAttachment("ankitkumar154575@gmail.com", subject, body, filePath);
 
-            return "Report generated and email sent successfully!";
-        } catch (IOException | MessagingException e) {
-            return "Error occurred: " + e.getMessage();
+            return ResponseEntity.ok("Email sent successfully with the Excel attachment!");
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Error sending email: " + e.getMessage());
         }
     }
 }
