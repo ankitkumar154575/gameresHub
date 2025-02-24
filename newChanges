@@ -179,3 +179,28 @@ public class ReportScheduler {
         }
     }
 }
+
+CONTROLLER :
+
+@RestController
+@RequestMapping("/api/reports")
+public class ReportController {
+
+    @Autowired
+    private ReportScheduler reportScheduler;
+
+    /**
+     * API Endpoint to manually trigger the scheduled job.
+     * URL: http://localhost:8080/api/reports/generate
+     */
+    @GetMapping("/generate")
+    public ResponseEntity<String> generateReportManually() {
+        try {
+            reportScheduler.scheduledReportGeneration(); // ✅ Manually triggering the scheduled method
+            return ResponseEntity.ok("Reconciliation report generated and email sent successfully.");
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                                 .body("Error generating report: " + e.getMessage());
+        }
+    }
+}
