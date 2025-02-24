@@ -1,150 +1,26 @@
-application.properties :
+package com.example.reconreport.controller;
 
-# ================================
-# Server Configuration
-# ================================
-server.port=8080
+import com.example.reconreport.model.EsopIgnoredRecon;
+import com.example.reconreport.model.EsopIwiRecon;
+import com.example.reconreport.model.EsopRejectedReferral;
+import com.example.reconreport.repository.EsopIgnoredReconRepository;
+import com.example.reconreport.repository.EsopIwiReconRepository;
+import com.example.reconreport.repository.EsopRejectedReferralRepository;
+import com.example.reconreport.service.EmailService;
+import com.example.reconreport.service.ExcelService;
 
-# ================================
-# Oracle Database Configuration
-# ================================
-spring.datasource.driver-class-name=oracle.jdbc.OracleDriver
-spring.datasource.url=jdbc:oracle:thin:@NASAIPD.oreas.dyn.nsroot.net:8889/HANA5AIPD
-spring.datasource.username=NASAIPD_SDM
-spring.datasource.password=Welcome123
-spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.OracleDialect
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.web.bind.annotation.*;
 
-# ================================
-# Excel File Path
-# ================================
-excel.file.path=C:/Users/harsh/Downloads/excel_report/Recon_Report.xlsx
+import javax.mail.MessagingException;
+import java.io.IOException;
+import java.time.LocalDate;
+import java.util.List;
 
-# ================================
-# Email Configuration
-# ================================
-spring.mail.host=smtp.gmail.com
-spring.mail.port=587
-spring.mail.username=adityaprakash0936@gmail.com
-spring.mail.password=Password@123
-spring.mail.properties.mail.smtp.auth=true
-spring.mail.properties.mail.smtp.starttls.enable=true
-
-# ================================
-# Logging Configuration (Replaces logback-spring.xml)
-# ================================
-# Console log level
-logging.level.org.springframework=INFO
-logging.level.com.example=DEBUG
-
-# Log file configuration
-logging.file.name=C:/Users/harsh/Downloads/excel_report/app.log
-logging.file.max-size=10MB
-logging.file.total-size-cap=100MB
-
-# Log patterns
-logging.pattern.console=%d{yyyy-MM-dd HH:mm:ss} - %msg%n
-logging.pattern.file=%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n
-
-
-ExcelExportService.java : 
-
-@Service
-public class ExcelService {
-
-    @Value("${excel.file.path}")  // Injected from application.properties
-    private String filePath;
-
-    public String generateExcelFile(List<EsopRejectedReferral> rejectedReferrals,
-                                    List<EsopIgnoredRecon> ignoredRecons,
-                                    List<EsopIwiRecon> iwiRecons) throws IOException {
-
-        Workbook workbook = new XSSFWorkbook();
-        Sheet sheet = workbook.createSheet("Recon_Report");
-
-        int rowNum = 0;
-
-        rowNum = writeTableData(sheet, "Rejected Referrals", rejectedReferrals, rowNum);
-        rowNum += 2;
-
-        rowNum = writeTableData(sheet, "Ignored Recon", ignoredRecons, rowNum);
-        rowNum += 2;
-
-        writeTableData(sheet, "IWI Recon", iwiRecons, rowNum);
-
-        try (FileOutputStream fileOut = new FileOutputStream(filePath)) {
-            workbook.write(fileOut);
-        }
-        workbook.close();
-
-        return filePath;
-    }
-
-    private <T> int writeTableData(Sheet sheet, String title, List<T> data, int rowNum) {
-        Row headerRow = sheet.createRow(rowNum++);
-        Cell headerCell = headerRow.createCell(0);
-        headerCell.setCellValue(title);
-        CellStyle style = sheet.getWorkbook().createCellStyle();
-        Font font = sheet.getWorkbook().createFont();
-        font.setBold(true);
-        style.setFont(font);
-        headerCell.setCellStyle(style);
-
-        if (!data.isEmpty()) {
-            Row columnRow = sheet.createRow(rowNum++);
-            Field[] fields = data.get(0).getClass().getDeclaredFields();
-            for (int i = 0; i < fields.length; i++) {
-                Cell cell = columnRow.createCell(i);
-                cell.setCellValue(fields[i].getName());
-                cell.setCellStyle(style);
-            }
-
-            for (T record : data) {
-                Row dataRow = sheet.createRow(rowNum++);
-                for (int i = 0; i < fields.length; i++) {
-                    fields[i].setAccessible(true);
-                    try {
-                        dataRow.createCell(i).setCellValue(String.valueOf(fields[i].get(record)));
-                    } catch (IllegalAccessException e) {
-                        e.printStackTrace();
-                    }
-                }
-            }
-        }
-        return rowNum;
-    }
-}
-EmailService.java :
-
-@Service
-public class EmailService {
-
-    @Autowired
-    private JavaMailSender mailSender;
-
-    @Value("${spring.mail.username}")
-    private String senderEmail;
-
-    public void sendEmailWithAttachment(String to, String subject, String body, String filePath) throws MessagingException {
-
-        MimeMessage message = mailSender.createMimeMessage();
-        MimeMessageHelper helper = new MimeMessageHelper(message, true);
-
-        helper.setFrom(senderEmail);
-        helper.setTo(to);
-        helper.setSubject(subject);
-        helper.setText(body);
-
-        FileSystemResource file = new FileSystemResource(new File(filePath));
-        helper.addAttachment(file.getFilename(), file);
-
-        mailSender.send(message);
-    }
-}
-
-ScheduledReport.java :
-
-@Component
-public class ReportScheduler {
+@RestController
+@RequestMapping("/api/report")
+public class ReportController {
 
     @Autowired
     private ExcelService excelService;
@@ -161,46 +37,28 @@ public class ReportScheduler {
     @Autowired
     private EsopIwiReconRepository iwiReconRepo;
 
-    @Scheduled(cron = "0 0 22 * * ?")  // Runs daily at 10 PM
-    public void scheduledReportGeneration() {
+    @Value("${excel.file.path}")
+    private String excelFilePath;
+
+    @PostMapping("/generate-and-send")
+    public String generateAndSendReport() {
         try {
+            // ✅ Fetch data from DB
             List<EsopRejectedReferral> rejectedReferrals = rejectedReferralRepo.findAll();
             List<EsopIgnoredRecon> ignoredRecons = ignoredReconRepo.findAll();
             List<EsopIwiRecon> iwiRecons = iwiReconRepo.findAll();
 
+            // ✅ Generate Excel file
             String filePath = excelService.generateExcelFile(rejectedReferrals, ignoredRecons, iwiRecons);
 
+            // ✅ Send Email with Attachment
             String subject = "eSOP to CMT Reconciliation Report";
             String body = "Please see the attached Reconciliation Report that was processed on " + LocalDate.now() + ".";
             emailService.sendEmailWithAttachment("ankitkumar154575@gmail.com", subject, body, filePath);
 
-        } catch (Exception e) {
-            System.err.println("Error in scheduled task: " + e.getMessage());
-        }
-    }
-}
-
-CONTROLLER :
-
-@RestController
-@RequestMapping("/api/reports")
-public class ReportController {
-
-    @Autowired
-    private ReportScheduler reportScheduler;
-
-    /**
-     * API Endpoint to manually trigger the scheduled job.
-     * URL: http://localhost:8080/api/reports/generate
-     */
-    @GetMapping("/generate")
-    public ResponseEntity<String> generateReportManually() {
-        try {
-            reportScheduler.scheduledReportGeneration(); // ✅ Manually triggering the scheduled method
-            return ResponseEntity.ok("Reconciliation report generated and email sent successfully.");
-        } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                                 .body("Error generating report: " + e.getMessage());
+            return "Report generated and email sent successfully!";
+        } catch (IOException | MessagingException e) {
+            return "Error occurred: " + e.getMessage();
         }
     }
 }
