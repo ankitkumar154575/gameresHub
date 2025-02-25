@@ -1,56 +1,99 @@
-@RestController
-@RequestMapping("/api/reports")
-public class ReportController {
-
-    @Autowired
-    private ExcelService excelService;
-
-    @Autowired
-    private EmailService emailService;
-
-    @Autowired
-    private EsopRejectedReferralRepository rejectedReferralRepo;
-
-    @Autowired
-    private EsopIgnoredReconRepository ignoredReconRepo;
-
-    @Autowired
-    private EsopIwiReconRepository iwiReconRepo;
+@Service
+public class ExcelService {
 
     @Value("${excel.file.path}")
     private String filePath;
 
-    // ✅ 1️⃣ API to Generate Excel
-    @PostMapping("/generate-excel")
-    public ResponseEntity<String> generateExcel() {
-        try {
-            List<EsopRejectedReferral> rejectedReferrals = rejectedReferralRepo.findAll();
-            List<EsopIgnoredRecon> ignoredRecons = ignoredReconRepo.findAll();
-            List<EsopIwiRecon> iwiRecons = iwiReconRepo.findAll();
+    // ✅ Mapping for custom headers
+    private static final Map<String, String> COLUMN_HEADER_MAP = Map.of(
+            "MISSING_MANDATORY_FIELDS", "Field(s) Missing from File",
+            "DATE_INITIAL_INGESTION", "Date of Initial Injection"
+    );
 
-            // Generate Excel File
-            excelService.generateExcelFile(rejectedReferrals, ignoredRecons, iwiRecons);
+    public String generateExcelFile(List<EsopRejectedReferral> rejectedReferrals,
+                                    List<EsopIgnoredRecon> ignoredRecons,
+                                    List<EsopIwiRecon> iwiRecons) throws IOException {
 
-            return ResponseEntity.ok("Excel file generated successfully at: " + filePath);
-        } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body("Error generating Excel: " + e.getMessage());
+        Workbook workbook = new XSSFWorkbook();
+        Sheet sheet = workbook.createSheet("Recon_Report");
+
+        int rowNum = 0;
+
+        // ✅ Write first table
+        rowNum = writeTableData(sheet, "Rejected Referrals", rejectedReferrals, rowNum);
+        rowNum += 2;
+
+        // ✅ Write second table
+        rowNum = writeTableData(sheet, "Ignored Recons", ignoredRecons, rowNum);
+        rowNum += 2;
+
+        // ✅ Write third table
+        writeTableData(sheet, "IWI Recons", iwiRecons, rowNum);
+
+        // ✅ Auto-size columns
+        for (int i = 0; i < 10; i++) { // Assuming max 10 columns
+            sheet.autoSizeColumn(i);
         }
+
+        // ✅ Write to file
+        try (FileOutputStream fileOut = new FileOutputStream(filePath)) {
+            workbook.write(fileOut);
+        } catch (IOException e) {
+            throw new IOException("Error writing Excel file: " + e.getMessage(), e);
+        } finally {
+            workbook.close();
+        }
+
+        return filePath;
     }
 
-    // ✅ 2️⃣ API to Send Email with Excel Attachment
-    @PostMapping("/send-email")
-    public ResponseEntity<String> sendEmail() {
-        try {
-            String subject = "eSOP to CMT Reconciliation Report";
-            String body = "Please see the attached Reconciliation Report that was processed on " + LocalDate.now() + ".";
+    private <T> int writeTableData(Sheet sheet, String title, List<T> data, int startRow) {
+        Workbook workbook = sheet.getWorkbook();
 
-            emailService.sendEmailWithAttachment("ankitkumar154575@gmail.com", subject, body, filePath);
+        // ✅ Bold style for headers
+        CellStyle boldStyle = workbook.createCellStyle();
+        Font boldFont = workbook.createFont();
+        boldFont.setBold(true);
+        boldStyle.setFont(boldFont);
 
-            return ResponseEntity.ok("Email sent successfully with the Excel attachment!");
-        } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body("Error sending email: " + e.getMessage());
+        // ✅ Title Row
+        Row titleRow = sheet.createRow(startRow++);
+        Cell titleCell = titleRow.createCell(0);
+        titleCell.setCellValue(title);
+        titleCell.setCellStyle(boldStyle);
+
+        if (!data.isEmpty()) {
+            // ✅ Column Headers
+            Field[] fields = data.get(0).getClass().getDeclaredFields();
+            Row headerRow = sheet.createRow(startRow++);
+            for (int i = 0; i < fields.length; i++) {
+                fields[i].setAccessible(true);
+                String originalFieldName = fields[i].getName();
+                String headerName = COLUMN_HEADER_MAP.getOrDefault(originalFieldName, originalFieldName);
+
+                Cell headerCell = headerRow.createCell(i);
+                headerCell.setCellValue(headerName);
+                headerCell.setCellStyle(boldStyle);
+            }
+
+            // ✅ Data Rows
+            for (T obj : data) {
+                Row dataRow = sheet.createRow(startRow++);
+                for (int i = 0; i < fields.length; i++) {
+                    try {
+                        Object value = fields[i].get(obj);
+                        dataRow.createCell(i).setCellValue(value != null ? value.toString() : "");
+                    } catch (IllegalAccessException e) {
+                        System.err.println("Error accessing field: " + fields[i].getName());
+                    }
+                }
+            }
+        } else {
+            // ✅ Empty Data Message
+            Row emptyRow = sheet.createRow(startRow++);
+            emptyRow.createCell(0).setCellValue("No Data Available");
         }
+
+        return startRow;
     }
 }
