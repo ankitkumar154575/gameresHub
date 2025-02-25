@@ -1,0 +1,104 @@
+Example: Mapping ResultSet to a List of Custom Objects
+
+1️⃣ Create a Custom Class (User.java)
+
+public class User {
+    private int id;
+    private String name;
+    private int age;
+    private String email;
+
+    // Constructor
+    public User(int id, String name, int age, String email) {
+        this.id = id;
+        this.name = name;
+        this.age = age;
+        this.email = email;
+    }
+
+    // Getters and Setters (optional)
+    public int getId() { return id; }
+    public String getName() { return name; }
+    public int getAge() { return age; }
+    public String getEmail() { return email; }
+
+    @Override
+    public String toString() {
+        return "User{id=" + id + ", name='" + name + "', age=" + age + ", email='" + email + "'}";
+    }
+}
+
+
+---
+
+2️⃣ Fetch Data and Convert to List of Objects
+
+import java.sql.*;
+import java.util.ArrayList;
+import java.util.List;
+
+public class UserDAO {
+    public static void main(String[] args) {
+        String url = "jdbc:mysql://localhost:3306/mydatabase";
+        String user = "root";
+        String password = "password";
+
+        String query = "SELECT id, name, age, email FROM users"; // Select all columns
+
+        List<User> userList = new ArrayList<>();
+
+        try (Connection conn = DriverManager.getConnection(url, user, password);
+             PreparedStatement pstmt = conn.prepareStatement(query);
+             ResultSet rs = pstmt.executeQuery()) {
+
+            while (rs.next()) { // Iterate through rows
+                User u = new User(
+                    rs.getInt("id"), 
+                    rs.getString("name"), 
+                    rs.getInt("age"), 
+                    rs.getString("email")
+                );
+                userList.add(u); // Add to list
+            }
+
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+
+        // Print the result list
+        for (User userObj : userList) {
+            System.out.println(userObj);
+        }
+    }
+}
+
+
+---
+
+💡 Explanation
+
+1. Define User Class → Represents a database row as a Java object.
+
+
+2. Create List<User> → Stores multiple users.
+
+
+3. Loop Through ResultSet → Converts each row into a User object and adds it to the list.
+
+
+4. Print userList → Displays the fetched data.
+
+
+
+
+---
+
+✅ Example Output (if users table has data)
+
+User{id=1, name='John Doe', age=30, email='john@example.com'}
+User{id=2, name='Alice', age=25, email='alice@example.com'}
+
+This approach is scalable and ideal for returning database records as Java objects in web applications (e.g., REST APIs).
+
+Would you like a generic version that works for any table dynamically?
+
